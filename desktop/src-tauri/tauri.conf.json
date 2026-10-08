@@ -1,0 +1,55 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "V.E.R.A.",
+  "version": "0.3.8",
+  "identifier": "com.solverg.vera",
+  "build": {
+    "beforeDevCommand": "npm run frontend:dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "V.E.R.A. — Verified Executive & Reliability Assistant",
+        "width": 1280,
+        "height": 780,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "decorations": true,
+        "transparent": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "nsis",
+    "icon": [
+      "../../app.ico"
+    ],
+    "copyright": "Copyright (c) 2026 Solverg.",
+    "license": "PolyForm-Noncommercial-1.0.0",
+    "licenseFile": "../../LICENSE.md",
+    "shortDescription": "Windows process and system-management assistant.",
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "binaries/vera-backend-x86_64-pc-windows-msvc/**/*"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEMjQ4RjIyNEFDREQyMzUKUldRMTBzMUtJbzhremRFUGROSGlzU2VvVEswLzF2UEE0K3Y5U2h4ZVNPSXJhWjRpNkxiTmdPdy8K",
+      "endpoints": ["https://github.com/Solverg/V-E-R-A/releases/latest/download/latest.json"],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

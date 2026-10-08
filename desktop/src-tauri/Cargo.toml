@@ -1,0 +1,22 @@
+[package]
+name = "vera-desktop"
+version = "0.3.8"
+description = "V.E.R.A. desktop shell"
+authors = ["V.E.R.A. contributors"]
+license = "PolyForm-Noncommercial-1.0.0"
+edition = "2021"
+
+[lib]
+name = "vera_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-process = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"

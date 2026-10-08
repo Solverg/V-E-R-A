@@ -1,0 +1,67 @@
+# Local Python runtimes and virtual environments
+.python/
+.venv/
+venv/
+env/
+ENV/
+__pypackages__/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local security/audit artifacts
+.codex-security-scans/
+
+# Local application data, secrets, and machine-specific config
+.env
+.env.*
+!.env.example
+.keys/
+*.local
+.vera/
+# Previous V.E.R.A. data is read once during the rename when no `.vera` folder exists.
+.kristina_helper/
+settings.json
+blocked.json
+descriptions.json
+
+# Test, type-check, and coverage output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+junit.xml
+
+# Build and packaging output
+build/
+dist/
+*.spec
+*.manifest
+*.toc
+*.pkg
+*.pyz
+*.whl
+*.tar.gz
+*.egg-info/
+.eggs/
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/
+desktop/src-tauri/gen/
+vs_BuildTools.exe
+*.log
+*.tmp
+*.bak
+
+# IDE/editor folders
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
