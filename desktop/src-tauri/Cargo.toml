@@ -1,6 +1,6 @@
 [package]
 name = "vera-desktop"
-version = "0.4.0"
+version = "0.4.1"
 description = "V.E.R.A. desktop shell"
 authors = ["V.E.R.A. contributors"]
 license = "PolyForm-Noncommercial-1.0.0"

@@ -24,8 +24,9 @@ managing process, firewall, network, and startup controls.
 - Optionally connects to Gemini or Groq for chat and cached process
   descriptions. Provider keys are stored with Windows DPAPI.
 - Supports app autostart and system-tray operation. Closing the main window
-  hides V.E.R.A. to the notification area; use the tray menu's **Open V.E.R.A.**
-  command to show it again, or **Exit** to stop it completely.
+  hides V.E.R.A. to the notification area while monitoring continues in the
+  background. Left-click the tray icon or use **Open V.E.R.A.** to restore the
+  window; use **Exit** to stop it completely.
 
 The interface copy is in Russian. See [the copy guide](docs/localization.md)
 for terminology rules.

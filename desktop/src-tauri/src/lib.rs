@@ -1,11 +1,17 @@
-use std::{path::PathBuf, process::Command, sync::atomic::{AtomicBool, AtomicU64, Ordering}, thread, time::Duration};
+use std::{
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    thread,
+    time::Duration,
+};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use tauri::{AppHandle, Manager, State};
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Manager, State};
 
 const SIDECAR_DIRECTORY: &str = "binaries/vera-backend-x86_64-pc-windows-msvc";
 const SIDECAR_EXECUTABLE: &str = "vera-backend-x86_64-pc-windows-msvc.exe";
@@ -39,6 +45,14 @@ fn sidecar_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 #[derive(Default)]
 struct MonitorState { enabled: AtomicBool, interval: AtomicU64 }
+
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
 
 fn backend_request_impl(app: &AppHandle, request: &str) -> Result<String, String> {
     let executable = sidecar_path(app)?;
@@ -95,11 +109,31 @@ pub fn run() {
             let open = MenuItem::with_id(app, "open", "Открыть V.E.R.A.", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
+            let tray_icon = app.default_window_icon().cloned().ok_or_else(|| {
+                std::io::Error::other("иконка приложения недоступна для системного трея")
+            })?;
             let handle = app.handle().clone();
-            let tray = TrayIconBuilder::with_id("vera-tray").menu(&menu).on_menu_event(move |app, event| match event.id.as_ref() {
-                "open" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } },
-                "quit" => app.exit(0), _ => {}
-            }).build(app)?;
+            let tray = TrayIconBuilder::with_id("vera-tray")
+                .icon(tray_icon)
+                .tooltip("V.E.R.A.")
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(move |app, event| match event.id.as_ref() {
+                    "open" => show_main_window(app),
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
+                    }
+                })
+                .build(app)?;
             // Tauri removes a tray icon when its handle is dropped. Keep it in
             // application state so closing the main window can reliably hide
             // V.E.R.A. to the notification area instead of ending the app.
