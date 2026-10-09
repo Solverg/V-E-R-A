@@ -96,17 +96,23 @@ pub fn run() {
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &quit])?;
             let handle = app.handle().clone();
-            TrayIconBuilder::with_id("vera-tray").menu(&menu).on_menu_event(move |app, event| match event.id.as_ref() {
+            let tray = TrayIconBuilder::with_id("vera-tray").menu(&menu).on_menu_event(move |app, event| match event.id.as_ref() {
                 "open" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } },
                 "quit" => app.exit(0), _ => {}
             }).build(app)?;
+            // Tauri removes a tray icon when its handle is dropped. Keep it in
+            // application state so closing the main window can reliably hide
+            // V.E.R.A. to the notification area instead of ending the app.
+            app.manage(tray);
             thread::spawn(move || { let mut first = true; loop { thread::sleep(Duration::from_secs(1)); let state = handle.state::<MonitorState>(); if !state.enabled.load(Ordering::Acquire) { first = true; continue; } let interval = state.interval.load(Ordering::Acquire).max(1); static TICK: AtomicU64 = AtomicU64::new(0); let tick=TICK.fetch_add(1, Ordering::Relaxed)+1; if tick % interval == 0 { let body = if first { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":true}"# } else { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":false}"# }; let _ = backend_request_impl(&handle, body); first=false; } } });
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![backend_request, monitor_configure, open_process_location])

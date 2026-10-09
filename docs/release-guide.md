@@ -30,7 +30,7 @@ release only after its assets and notes have been reviewed.
    - `desktop/src-tauri/tauri.conf.json`
    - the About panel in `desktop/src/main.js`
 2. Add user-facing notes based only on verified changes.
-3. Commit the release changes and push a matching tag, for example `v0.3.8`.
+3. Commit the release changes and push a matching tag, for example `v0.4.0`.
 4. GitHub Actions builds the Python sidecar, creates a signed NSIS updater
    artifact and its signature, then opens a draft release with `latest.json`.
 5. Test the draft's installer on a clean Windows account. Confirm that the
