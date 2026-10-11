@@ -5,6 +5,9 @@ const demoProcesses = [
   { pid: 9420, name: "chrome.exe", cpu_percent: 4.6, memory_mb: 492.7, status: "running", is_blocked: false, block_mode: "", security_status: "verified", exe: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", description: "Обеспечивает работу вкладок и фоновых компонентов браузера.", description_status: "verified" },
   { pid: 11804, name: "discord.exe", cpu_percent: 0.3, memory_mb: 238.4, status: "sleeping", is_blocked: true, block_mode: "permanent", security_status: "unknown", exe: "C:\\Users\\User\\AppData\\Local\\Discord\\discord.exe" },
 ];
+let demoFirewallRules = [
+  { id: "demo-chrome", label: "Chrome: без интернета", program: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", action: "block", direction: "outbound", protocol: "any", local_port: "any", remote_ip: "any", profile: "any", enabled: true },
+];
 // The preview also demonstrates the stacked-card treatment used for
 // multi-process applications in the Tauri runtime.
 demoProcesses.push(
@@ -44,6 +47,15 @@ async function requestDemo(action, payload = {}) {
   if (action === "processes.statistics") return { ok: true, data: { total_processes: demoProcesses.length, active_rules: 1, active_blocked_processes: 1, session_terminated: 0 } };
   if (action === "network.list") return { ok: true, data: [] };
   if (action === "network.public_ip") return { ok: true, data: { ip: "203.0.113.42", country_code: "GE", country_name: "Грузия", city: "Тбилиси", provider: "V.E.R.A. Preview", asn: "AS64500" } };
+  if (action === "firewall.list") return { ok: true, data: demoFirewallRules };
+  if (action === "firewall.create") {
+    const values = payload.values || {}, program = String(values.program || ""), fileName = program.split(/[/\\\\]/).pop() || "Приложение";
+    const rule = { id: `demo-${Date.now()}`, label: String(values.label || fileName.replace(/\.exe$/i, "")), program, action: values.action === "allow" ? "allow" : "block", direction: values.direction === "inbound" ? "inbound" : "outbound", protocol: ["tcp", "udp"].includes(values.protocol) ? values.protocol : "any", local_port: String(values.local_port || "any"), remote_ip: String(values.remote_ip || "any"), profile: ["domain", "private", "public"].includes(values.profile) ? values.profile : "any", enabled: true };
+    demoFirewallRules = [...demoFirewallRules, rule];
+    return { ok: true, data: rule };
+  }
+  if (action === "firewall.toggle") { demoFirewallRules = demoFirewallRules.map(rule => rule.id === payload.id ? { ...rule, enabled: !rule.enabled } : rule); return { ok: true, data: demoFirewallRules.find(rule => rule.id === payload.id) }; }
+  if (action === "firewall.delete") { demoFirewallRules = demoFirewallRules.filter(rule => rule.id !== payload.id); return { ok: true, data: true }; }
   if (action === "startup.list") return { ok: true, data: [
     { name: "OneDrive", source: "HKCU", target_path: "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe", status: "active", raw_key: "OneDrive", needs_admin: false },
     { name: "Game Launcher", source: "FOLDER_USER", target_path: "C:\\Apps\\Game Launcher\\launcher.exe", status: "paused", raw_key: "C:\\Startup\\Game Launcher.lnk.disabled", needs_admin: false },

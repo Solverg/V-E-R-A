@@ -15,6 +15,11 @@ use tauri::{AppHandle, Manager, State};
 
 const SIDECAR_DIRECTORY: &str = "binaries/vera-backend-x86_64-pc-windows-msvc";
 const SIDECAR_EXECUTABLE: &str = "vera-backend-x86_64-pc-windows-msvc.exe";
+const AUTOSTART_ARGUMENT: &str = "--autostart";
+
+fn is_autostart_launch() -> bool {
+    std::env::args_os().any(|argument| argument == AUTOSTART_ARGUMENT)
+}
 
 fn sidecar_path(app: &AppHandle) -> Result<PathBuf, String> {
     let packaged_path = app
@@ -102,6 +107,7 @@ fn open_process_location(path: String) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(MonitorState { enabled: AtomicBool::new(false), interval: AtomicU64::new(5) })
@@ -138,6 +144,12 @@ pub fn run() {
             // application state so closing the main window can reliably hide
             // V.E.R.A. to the notification area instead of ending the app.
             app.manage(tray);
+            // The main window is configured as initially hidden so a logon
+            // launch never flashes a window. Normal launches restore it as
+            // soon as the tray is ready; autostart leaves it in the tray.
+            if !is_autostart_launch() {
+                show_main_window(app.handle());
+            }
             thread::spawn(move || { let mut first = true; loop { thread::sleep(Duration::from_secs(1)); let state = handle.state::<MonitorState>(); if !state.enabled.load(Ordering::Acquire) { first = true; continue; } let interval = state.interval.load(Ordering::Acquire).max(1); static TICK: AtomicU64 = AtomicU64::new(0); let tick=TICK.fetch_add(1, Ordering::Relaxed)+1; if tick % interval == 0 { let body = if first { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":true}"# } else { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":false}"# }; let _ = backend_request_impl(&handle, body); first=false; } } });
             Ok(())
         })

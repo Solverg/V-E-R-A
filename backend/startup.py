@@ -113,7 +113,11 @@ class StartupManager:
                 command = command or os.environ.get("VERA_APP_EXE", "")
                 if not command:
                     raise ValueError("Не удалось определить путь V.E.R.A. для автозапуска.")
-                winreg.SetValueEx(key,name,0,winreg.REG_SZ,f'"{command}"')
+                # The desktop shell uses this switch to distinguish a Windows
+                # logon launch from an explicit user launch.  It must be part
+                # of the Run command rather than inferred from the registry:
+                # a user may also open V.E.R.A. manually while autostart is on.
+                winreg.SetValueEx(key,name,0,winreg.REG_SZ,f'"{command}" --autostart')
             else:
                 try:winreg.DeleteValue(key,name)
                 except FileNotFoundError:pass
