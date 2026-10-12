@@ -44,6 +44,9 @@ class SettingsStore:
                     except SecureStorageError as exc: raise ValueError("Не удалось безопасно сохранить API-ключ.") from exc
                 else: self.data["secrets"].pop(key,None)
             elif key in DEFAULTS and key != "secrets": self.data[key]=value
-        self.data["scan_interval_sec"]=max(1,min(60,int(self.data.get("scan_interval_sec",5))))
+        # A full process scan every second competes with the desktop UI and
+        # can keep low-end machines permanently busy.  Five seconds is still
+        # responsive for enforcement while leaving room for normal work.
+        self.data["scan_interval_sec"]=max(5,min(60,int(self.data.get("scan_interval_sec",5))))
         self.data["monitoring_enabled"]=bool(self.data.get("monitoring_enabled"))
         self._save(); return self.public()

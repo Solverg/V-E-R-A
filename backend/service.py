@@ -305,10 +305,17 @@ class BackendService:
             return {"ok": True, "data": list_connections()}
         if action == "network.public_ip":
             return {"ok": True, "data": public_ip()}
+        if action == "network.snapshot":
+            # Keep network collection in one sidecar request.  The desktop
+            # shell otherwise starts independent Python processes for socket
+            # scanning and external-IP lookup at the same time.
+            return {"ok": True, "data": {"connections": list_connections(), "public_ip": public_ip()}}
         if action == "firewall.list":
             return {"ok": True, "data": self.firewall.list()}
         if action == "firewall.create":
             return {"ok": True, "data": self.firewall.create(dict(request.get("values") or {}))}
+        if action == "firewall.update":
+            return {"ok": True, "data": self.firewall.update(str(request.get("id") or ""), dict(request.get("values") or {}))}
         if action == "firewall.toggle":
             return {"ok": True, "data": self.firewall.toggle(str(request.get("id") or ""))}
         if action == "firewall.delete":

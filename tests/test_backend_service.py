@@ -70,6 +70,19 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(result["data"]["scan_interval_sec"], 60)
         self.assertNotIn("gemini_api_key", self.service.handle({"action": "settings.get"})["data"])
 
+    def test_monitoring_interval_has_a_safe_lower_bound(self):
+        result = self.service.handle({"action": "settings.set", "values": {"scan_interval_sec": 1}})
+        self.assertEqual(result["data"]["scan_interval_sec"], 5)
+
+    def test_network_snapshot_collects_connections_and_public_ip_once(self):
+        with patch("backend.service.list_connections", return_value=[{"pid": 1}]) as connections, patch("backend.service.public_ip", return_value={"ip": "8.8.8.8"}) as ip:
+            response = self.service.handle({"action": "network.snapshot"})
+
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["data"], {"connections": [{"pid": 1}], "public_ip": {"ip": "8.8.8.8"}})
+        connections.assert_called_once_with()
+        ip.assert_called_once_with()
+
     def test_process_snapshot_collects_processes_once(self):
         processes = [{"pid": 10, "name": "demo.exe", "is_blocked": True}]
         with patch.object(self.service, "list_processes", return_value=processes) as list_processes:
@@ -181,6 +194,20 @@ class BackendServiceTests(unittest.TestCase):
         manager = FirewallManager(Path(self.temp_dir.name))
         with self.assertRaises(ValueError):
             manager.create({"label": "Bad", "program": "C:\\not-an-exe.txt"})
+
+    def test_firewall_rejects_duplicates_and_updates_only_owned_rule(self):
+        executable = Path(self.temp_dir.name) / "demo.exe"
+        executable.touch()
+        manager = FirewallManager(Path(self.temp_dir.name))
+        values = {"label": "Block demo", "program": str(executable), "action": "block", "direction": "outbound", "protocol": "any", "local_port": "any", "remote_ip": "any", "profile": "any"}
+        with patch.object(FirewallManager, "_run_netsh"):
+            created = manager.create(values)
+            with self.assertRaisesRegex(ValueError, "уже существует"):
+                manager.create(values)
+            updated = manager.update(created["id"], {**values, "action": "allow", "label": "Allow demo"})
+        self.assertEqual(updated["id"], created["id"])
+        self.assertEqual(updated["action"], "allow")
+        self.assertTrue(updated["system_name"].startswith("V.E.R.A. Firewall"))
 
     def test_redacts_user_name_from_path(self):
         self.assertEqual(redact_path(r"C:\Users\Alice\AppData\app.exe"), r"C:\Users\<user>\AppData\app.exe")

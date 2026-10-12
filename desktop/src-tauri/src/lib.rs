@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     process::Command,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::{atomic::{AtomicBool, AtomicU64, Ordering}, Mutex},
     thread,
     time::Duration,
 };
@@ -51,6 +51,12 @@ fn sidecar_path(app: &AppHandle) -> Result<PathBuf, String> {
 #[derive(Default)]
 struct MonitorState { enabled: AtomicBool, interval: AtomicU64 }
 
+/// Serializes scans that enumerate the entire process/socket table.  Sidecars
+/// are short-lived by design, so allowing a refresh and monitor pass to start
+/// together needlessly doubles the Windows API work.
+#[derive(Default)]
+struct BackendWorkGate(Mutex<()>);
+
 fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -85,13 +91,19 @@ fn backend_request_impl(app: &AppHandle, request: &str) -> Result<String, String
 }
 
 #[tauri::command]
-fn backend_request(app: AppHandle, request: String) -> Result<String, String> {
-    backend_request_impl(&app, &request)
+fn backend_request(app: AppHandle, gate: State<BackendWorkGate>, request: String) -> Result<String, String> {
+    let is_scan = request.contains("\"action\":\"processes.") || request.contains("\"action\":\"network.");
+    if is_scan {
+        let _guard = gate.0.lock().map_err(|_| "Очередь backend-а недоступна.")?;
+        backend_request_impl(&app, &request)
+    } else {
+        backend_request_impl(&app, &request)
+    }
 }
 
 #[tauri::command]
 fn monitor_configure(state: State<MonitorState>, enabled: bool, interval_seconds: u64) -> Result<(), String> {
-    if !(1..=60).contains(&interval_seconds) { return Err("Интервал мониторинга должен быть от 1 до 60 секунд.".into()); }
+    if !(5..=60).contains(&interval_seconds) { return Err("Интервал мониторинга должен быть от 5 до 60 секунд.".into()); }
     state.interval.store(interval_seconds, Ordering::Release); state.enabled.store(enabled, Ordering::Release); Ok(())
 }
 
@@ -111,6 +123,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(MonitorState { enabled: AtomicBool::new(false), interval: AtomicU64::new(5) })
+        .manage(BackendWorkGate::default())
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "Открыть V.E.R.A.", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Выход", true, None::<&str>)?;
@@ -150,7 +163,7 @@ pub fn run() {
             if !is_autostart_launch() {
                 show_main_window(app.handle());
             }
-            thread::spawn(move || { let mut first = true; loop { thread::sleep(Duration::from_secs(1)); let state = handle.state::<MonitorState>(); if !state.enabled.load(Ordering::Acquire) { first = true; continue; } let interval = state.interval.load(Ordering::Acquire).max(1); static TICK: AtomicU64 = AtomicU64::new(0); let tick=TICK.fetch_add(1, Ordering::Relaxed)+1; if tick % interval == 0 { let body = if first { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":true}"# } else { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":false}"# }; let _ = backend_request_impl(&handle, body); first=false; } } });
+            thread::spawn(move || { let mut first = true; loop { thread::sleep(Duration::from_secs(1)); let state = handle.state::<MonitorState>(); if !state.enabled.load(Ordering::Acquire) { first = true; continue; } let interval = state.interval.load(Ordering::Acquire).max(5); static TICK: AtomicU64 = AtomicU64::new(0); let tick=TICK.fetch_add(1, Ordering::Relaxed)+1; if tick % interval == 0 { let body = if first { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":true}"# } else { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":false}"# }; let gate = handle.state::<BackendWorkGate>(); if let Ok(_guard) = gate.0.lock() { let _ = backend_request_impl(&handle, body); } first=false; } } });
             Ok(())
         })
         .on_window_event(|window, event| {

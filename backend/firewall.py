@@ -89,7 +89,15 @@ class FirewallManager:
     def list(self) -> list[dict[str, Any]]:
         return list(self._load().values())
 
-    def create(self, values: dict[str, Any]) -> dict[str, Any]:
+    @staticmethod
+    def _signature(record: dict[str, Any]) -> tuple[str, ...]:
+        """Fields that make a Firewall rule meaningfully identical."""
+        return tuple(str(record.get(key) or "").strip().lower() for key in (
+            "program", "action", "direction", "protocol", "local_port", "remote_ip", "profile",
+        ))
+
+    def _record(self, values: dict[str, Any], rule_id: str, system_name: str) -> dict[str, Any]:
+        """Validate all user input before it can reach netsh."""
         program = Path(str(values.get("program") or "").strip())
         if not program.is_file() or program.suffix.lower() != ".exe":
             raise ValueError("Укажите существующий .exe-файл программы.")
@@ -99,10 +107,9 @@ class FirewallManager:
         profile = str(values.get("profile") or "any").lower()
         if action not in ACTIONS or direction not in DIRECTIONS or protocol not in PROTOCOLS or profile not in PROFILES:
             raise ValueError("Недопустимые параметры правила Firewall.")
-        rule_id = uuid.uuid4().hex[:12]
-        record = {
+        return {
             "id": rule_id,
-            "system_name": f"{RULE_PREFIX} #{rule_id}",
+            "system_name": system_name,
             "label": self._label(values.get("label") or program.stem),
             "program": str(program),
             "action": action,
@@ -113,12 +120,38 @@ class FirewallManager:
             "profile": profile,
             "enabled": True,
         }
+
+    def _add_rule(self, record: dict[str, Any]) -> None:
         self._run_netsh([
-            "advfirewall", "firewall", "add", "rule", f"name={record['system_name']}", f"dir={DIRECTIONS[direction]}",
-            f"action={action}", f"program={record['program']}", f"enable=yes", f"profile={profile}",
-            f"protocol={protocol.upper()}", f"localport={record['local_port']}", f"remoteip={record['remote_ip']}",
+            "advfirewall", "firewall", "add", "rule", f"name={record['system_name']}", f"dir={DIRECTIONS[record['direction']]}",
+            f"action={record['action']}", f"program={record['program']}", "enable=yes", f"profile={record['profile']}",
+            f"protocol={record['protocol'].upper()}", f"localport={record['local_port']}", f"remoteip={record['remote_ip']}",
         ])
-        rules = self._load(); rules[rule_id] = record; self._save(rules)
+
+    def create(self, values: dict[str, Any]) -> dict[str, Any]:
+        rule_id = uuid.uuid4().hex[:12]
+        record = self._record(values, rule_id, f"{RULE_PREFIX} #{rule_id}")
+        rules = self._load()
+        if any(self._signature(existing) == self._signature(record) for existing in rules.values()):
+            raise ValueError("Такое правило V.E.R.A. Firewall уже существует.")
+        self._add_rule(record)
+        rules[rule_id] = record
+        self._save(rules)
+        return record
+
+    def update(self, rule_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        """Replace one known V.E.R.A. rule after the same strict validation."""
+        rules = self._load()
+        existing = rules.get(str(rule_id))
+        if not existing:
+            raise ValueError("Правило Firewall не найдено.")
+        record = self._record(values, str(rule_id), str(existing["system_name"]))
+        if any(key != str(rule_id) and self._signature(other) == self._signature(record) for key, other in rules.items()):
+            raise ValueError("Такое правило V.E.R.A. Firewall уже существует.")
+        self._run_netsh(["advfirewall", "firewall", "delete", "rule", f"name={existing['system_name']}"])
+        self._add_rule(record)
+        rules[str(rule_id)] = record
+        self._save(rules)
         return record
 
     def toggle(self, rule_id: str) -> dict[str, Any]:

@@ -4,6 +4,7 @@ import ipaddress
 import json
 import socket
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -47,9 +48,19 @@ def _process(pid: int | None, status: str) -> tuple[str, str]:
     except (psutil.NoSuchProcess, psutil.AccessDenied): path = ""
     return name, path
 
-def _connection_row(pid: int | None, local: str, local_port: int | None, remote: str, remote_port: int | None, status: str, family: str) -> dict[str, Any]:
+def _connection_row(pid: int | None, local: str, local_port: int | None, remote: str, remote_port: int | None, status: str, family: str, process_cache: dict[int, tuple[str, str]] | None = None) -> dict[str, Any]:
     numeric_pid = int(pid or 0)
-    name, path = _process(numeric_pid, status)
+    # A browser or service commonly owns dozens of sockets.  Resolving its
+    # executable for every socket repeats expensive Windows process queries.
+    # Keep the cache local to a single scan: it cannot make stale process data
+    # survive into a later refresh, yet avoids that duplicated work.
+    cache_key = numeric_pid
+    if process_cache is not None and cache_key in process_cache:
+        name, path = process_cache[cache_key]
+    else:
+        name, path = _process(numeric_pid, status)
+        if process_cache is not None:
+            process_cache[cache_key] = (name, path)
     address_type = classify_address(remote)
     return {"pid":numeric_pid,"process_name":name,"process_path":path,"local_address":local,"local_port":local_port,"remote_address":remote,"remote_port":remote_port,"status":status,"family":family,"address_type":address_type,"risk":calculate_risk(name,path,address_type,status)}
 
@@ -71,6 +82,7 @@ def _list_connections_netstat() -> list[dict[str, Any]]:
         result = subprocess.run(["netstat", "-ano"], capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=5)
     except (OSError, subprocess.SubprocessError): return []
     rows=[]
+    process_cache: dict[int, tuple[str, str]] = {}
     for line in result.stdout.splitlines():
         parts=line.split()
         if len(parts) < 4 or parts[0].upper() not in {"TCP", "UDP"}: continue
@@ -85,21 +97,22 @@ def _list_connections_netstat() -> list[dict[str, Any]]:
             try: pid=int(parts[3])
             except ValueError: continue
         family="IPv6" if ":" in local or ":" in remote else "IPv4"
-        rows.append(_connection_row(pid,local,local_port,remote,remote_port,status,family))
+        rows.append(_connection_row(pid,local,local_port,remote,remote_port,status,family,process_cache))
     return rows
 
 def list_connections() -> list[dict[str, Any]]:
     rows=[]
+    process_cache: dict[int, tuple[str, str]] = {}
     try: connections=psutil.net_connections(kind="inet")
     except psutil.AccessDenied: rows=_list_connections_netstat(); connections=[]
     for conn in connections:
         status=str(conn.status or ""); pid=int(conn.pid or 0)
         local,local_port=_address(conn.laddr); remote,remote_port=_address(conn.raddr)
-        rows.append(_connection_row(pid,local,local_port,remote,remote_port,status,"IPv4" if conn.family==socket.AF_INET else "IPv6" if conn.family==socket.AF_INET6 else str(conn.family)))
+        rows.append(_connection_row(pid,local,local_port,remote,remote_port,status,"IPv4" if conn.family==socket.AF_INET else "IPv6" if conn.family==socket.AF_INET6 else str(conn.family),process_cache))
     order={"attention":0,"medium":1,"low":2}
     return sorted(rows,key=lambda x:(order.get(x["risk"],3),x["process_name"].lower(),x["pid"],x["remote_address"]))
 
-def _fetch(url: str, timeout: float=3.0) -> str:
+def _fetch(url: str, timeout: float=2.0) -> str:
     req=urllib.request.Request(url, headers={"User-Agent":"V.E.R.A./0.2"})
     with urllib.request.urlopen(req, timeout=timeout) as response: return response.read(65536).decode("utf-8", "replace")
 
@@ -111,16 +124,24 @@ def _ip_details(ip: str, **values: Any) -> dict[str, Any]:
     return {"ip":str(parsed),"country_code":"","country_name":"","city":"","asn":"","provider":"",**values}
 
 def public_ip() -> dict[str, Any]:
+    # This endpoint is refreshed in the UI.  A disconnected network must not
+    # leave successive sidecar requests accumulating for tens of seconds.
+    deadline = time.monotonic() + 6.0
     errors=[]
+    def fetch_with_budget(url: str) -> str:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Public IP lookup timed out")
+        return _fetch(url, timeout=min(2.0, remaining))
     for url, parser in (("https://ipapi.co/json/",lambda d:_ip_details(d.get("ip", ""),country_code=d.get("country_code") or "",country_name=d.get("country_name") or "",city=d.get("city") or "",asn=d.get("asn") or "",provider=d.get("org") or "")),("https://ipwho.is/",lambda d:_ip_details(d.get("ip", ""),country_code=d.get("country_code") or "",country_name=d.get("country") or "",city=d.get("city") or "",asn=(d.get("connection") or {}).get("asn") or "",provider=(d.get("connection") or {}).get("isp") or (d.get("connection") or {}).get("org") or "")),("https://ipinfo.io/json",lambda d:_ip_details(d.get("ip", ""),country_code=d.get("country") or "",country_name=d.get("region") or "",city=d.get("city") or "",provider=d.get("org") or "")),("https://api.ipify.org?format=json",lambda d:_ip_details(d.get("ip", "")))):
         try:
-            result=parser(json.loads(_fetch(url)))
+            result=parser(json.loads(fetch_with_budget(url)))
             if result.get("ip"): return result
-        except (OSError, ValueError, urllib.error.URLError) as exc: errors.append(type(exc).__name__)
+        except (OSError, ValueError, urllib.error.URLError, TimeoutError) as exc: errors.append(type(exc).__name__)
     for url in ("https://api.ipify.org", "https://api64.ipify.org", "https://icanhazip.com", "https://checkip.amazonaws.com", "https://ifconfig.me/ip"):
         try:
-            ip=_fetch(url).strip()
+            ip=fetch_with_budget(url).strip()
             result = _ip_details(ip)
             if result: return result
-        except (OSError, ValueError, urllib.error.URLError): pass
+        except (OSError, ValueError, urllib.error.URLError, TimeoutError): pass
     return {"ip":"","country_code":"","country_name":"","city":"","asn":"","provider":"","error":"Не удалось определить внешний IP. Проверьте подключение к сети."}

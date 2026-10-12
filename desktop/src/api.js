@@ -7,6 +7,8 @@ const demoProcesses = [
 ];
 let demoFirewallRules = [
   { id: "demo-chrome", label: "Chrome: без интернета", program: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", action: "block", direction: "outbound", protocol: "any", local_port: "any", remote_ip: "any", profile: "any", enabled: true },
+  { id: "demo-discord", label: "Discord: разрешить интернет", program: "C:\\Users\\User\\AppData\\Local\\Discord\\discord.exe", action: "allow", direction: "outbound", protocol: "tcp", local_port: "any", remote_ip: "any", profile: "private", enabled: false },
+  { id: "demo-long", label: "Входящие для корпоративного агента", program: "C:\\Program Files\\V.E.R.A. Enterprise\\Network Components\\Very Long Folder Name\\agent-service.exe", action: "block", direction: "inbound", protocol: "tcp", local_port: "443", remote_ip: "203.0.113.42", profile: "domain", enabled: true },
 ];
 // The preview also demonstrates the stacked-card treatment used for
 // multi-process applications in the Tauri runtime.
@@ -47,11 +49,20 @@ async function requestDemo(action, payload = {}) {
   if (action === "processes.statistics") return { ok: true, data: { total_processes: demoProcesses.length, active_rules: 1, active_blocked_processes: 1, session_terminated: 0 } };
   if (action === "network.list") return { ok: true, data: [] };
   if (action === "network.public_ip") return { ok: true, data: { ip: "203.0.113.42", country_code: "GE", country_name: "Грузия", city: "Тбилиси", provider: "V.E.R.A. Preview", asn: "AS64500" } };
+  if (action === "network.snapshot") return { ok: true, data: { connections: [], public_ip: { ip: "203.0.113.42", country_code: "GE", country_name: "Грузия", city: "Тбилиси", provider: "V.E.R.A. Preview", asn: "AS64500" } } };
   if (action === "firewall.list") return { ok: true, data: demoFirewallRules };
   if (action === "firewall.create") {
     const values = payload.values || {}, program = String(values.program || ""), fileName = program.split(/[/\\\\]/).pop() || "Приложение";
     const rule = { id: `demo-${Date.now()}`, label: String(values.label || fileName.replace(/\.exe$/i, "")), program, action: values.action === "allow" ? "allow" : "block", direction: values.direction === "inbound" ? "inbound" : "outbound", protocol: ["tcp", "udp"].includes(values.protocol) ? values.protocol : "any", local_port: String(values.local_port || "any"), remote_ip: String(values.remote_ip || "any"), profile: ["domain", "private", "public"].includes(values.profile) ? values.profile : "any", enabled: true };
     demoFirewallRules = [...demoFirewallRules, rule];
+    return { ok: true, data: rule };
+  }
+  if (action === "firewall.update") {
+    const values = payload.values || {}, id = String(payload.id || ""), existing = demoFirewallRules.find(rule => rule.id === id);
+    if (!existing) throw new Error("Правило Firewall не найдено.");
+    const fileName = String(values.program || existing.program).split(/[/\\\\]/).pop() || "Приложение";
+    const rule = { ...existing, label: String(values.label || fileName.replace(/\.exe$/i, "")), program: String(values.program || existing.program), action: values.action === "allow" ? "allow" : "block", direction: values.direction === "inbound" ? "inbound" : "outbound", protocol: ["tcp", "udp"].includes(values.protocol) ? values.protocol : "any", local_port: String(values.local_port || "any"), remote_ip: String(values.remote_ip || "any"), profile: ["domain", "private", "public"].includes(values.profile) ? values.profile : "any" };
+    demoFirewallRules = demoFirewallRules.map(item => item.id === id ? rule : item);
     return { ok: true, data: rule };
   }
   if (action === "firewall.toggle") { demoFirewallRules = demoFirewallRules.map(rule => rule.id === payload.id ? { ...rule, enabled: !rule.enabled } : rule); return { ok: true, data: demoFirewallRules.find(rule => rule.id === payload.id) }; }
