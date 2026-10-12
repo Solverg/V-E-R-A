@@ -17,6 +17,12 @@ class SettingsStore:
             if isinstance(raw,dict):
                 for key,value in raw.items():
                     if key not in SECRET_KEYS: data[key]=value
+                # Monitoring used to be implicit whenever process rules
+                # existed. Preserve that behavior for a pre-monitoring
+                # settings file; otherwise every migrated rule would look
+                # active but never be enforced.
+                if "monitoring_enabled" not in raw:
+                    data["monitoring_enabled"]=True
                 # upgrade earlier plaintext keys by encrypting on the next set/save
                 for key in SECRET_KEYS:
                     if raw.get(key): data.setdefault("_legacy",{})[key]=str(raw[key])

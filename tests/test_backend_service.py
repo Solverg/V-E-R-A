@@ -74,6 +74,15 @@ class BackendServiceTests(unittest.TestCase):
         result = self.service.handle({"action": "settings.set", "values": {"scan_interval_sec": 1}})
         self.assertEqual(result["data"]["scan_interval_sec"], 5)
 
+    def test_legacy_settings_without_monitoring_flag_keep_enforcement_enabled(self):
+        settings_path = Path(self.temp_dir.name) / "settings.json"
+        settings_path.write_text(json.dumps({"scan_interval_sec": 60}), encoding="utf-8")
+
+        migrated = BackendService(Path(self.temp_dir.name)).handle({"action": "settings.get"})["data"]
+
+        self.assertTrue(migrated["monitoring_enabled"])
+        self.assertEqual(migrated["scan_interval_sec"], 60)
+
     def test_network_snapshot_collects_connections_and_public_ip_once(self):
         with patch("backend.service.list_connections", return_value=[{"pid": 1}]) as connections, patch("backend.service.public_ip", return_value={"ip": "8.8.8.8"}) as ip:
             response = self.service.handle({"action": "network.snapshot"})
