@@ -250,7 +250,7 @@ go("processes").then(async()=>{if(!isTauri())return;try{let x=(await backendRequ
 function addUpdateControl(){
   if(S.page!=="settings"||document.querySelector("#check-updates"))return;
   let details=document.querySelector(".settings-about .about-details");
-  if(details){let version=details.querySelector("span");if(version)version.textContent="Версия 0.4.3";details.insertAdjacentHTML("beforeend",'<button id="check-updates" type="button" class="row-action">Проверить обновления</button>')}
+  if(details){let version=details.querySelector("span");if(version)version.textContent="Версия 0.4.4";details.insertAdjacentHTML("beforeend",'<button id="check-updates" type="button" class="row-action">Проверить обновления</button>')}
 }
 const renderBeforeUpdateControl=migratedRender;
 migratedRender=function(){renderBeforeUpdateControl();addUpdateControl()};

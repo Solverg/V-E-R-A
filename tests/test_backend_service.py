@@ -145,6 +145,28 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(terminate.call_count, 2)
         list_processes.assert_not_called()
 
+    def test_enforcement_applies_permanent_rules_in_every_cycle(self):
+        permanent = BlockRule(name="permanent.exe", mode="permanent")
+        launch_only = BlockRule(name="launch.exe", mode="kill_on_launch")
+        rules = {
+            self.service.rule_key(permanent.name): permanent,
+            self.service.rule_key(launch_only.name): launch_only,
+        }
+        processes = [
+            SimpleNamespace(info={"pid": 101, "name": "permanent.exe", "exe": r"C:\\Apps\\permanent.exe"}),
+            SimpleNamespace(info={"pid": 102, "name": "launch.exe", "exe": r"C:\\Apps\\launch.exe"}),
+        ]
+
+        with patch("backend.service.psutil.process_iter", return_value=processes), patch.object(self.service, "_load_rules", return_value=rules), patch.object(self.service, "_save_rules"), patch.object(self.service, "terminate_process", return_value=True) as terminate:
+            regular_cycle = self.service.enforce_processes(launch_cycle=False)
+            launch_cycle = self.service.enforce_processes(launch_cycle=True)
+
+        self.assertEqual(regular_cycle["terminated"], 1)
+        self.assertEqual(launch_cycle["terminated"], 2)
+        self.assertEqual(permanent.kill_count, 2)
+        self.assertEqual(launch_only.kill_count, 1)
+        self.assertEqual([call.args[0] for call in terminate.call_args_list], [101, 101, 102])
+
     def test_network_address_classification_and_risk(self):
         self.assertEqual(classify_address(""), "empty")
         self.assertEqual(classify_address("127.0.0.1"), "loopback")

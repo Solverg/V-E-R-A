@@ -90,6 +90,47 @@ fn backend_request_impl(app: &AppHandle, request: &str) -> Result<String, String
     String::from_utf8(output.stdout).map_err(|_| "Sidecar вернул ответ не в UTF-8.".into())
 }
 
+/// Run an enforcement pass and treat an application-level backend error as a
+/// failed pass too.  The monitor must retain its launch-cycle state in that
+/// case so it can retry instead of silently skipping Kill-on-Launch rules.
+fn enforcement_request(launch_cycle: bool) -> &'static str {
+    if launch_cycle {
+        r#"{"action":"processes.enforce","launch_cycle":true}"#
+    } else {
+        r#"{"action":"processes.enforce","launch_cycle":false}"#
+    }
+}
+
+fn enforce_processes(app: &AppHandle, launch_cycle: bool) -> Result<(), String> {
+    let response = backend_request_impl(app, enforcement_request(launch_cycle))?;
+    let payload: serde_json::Value = serde_json::from_str(&response)
+        .map_err(|_| "Sidecar вернул некорректный JSON.".to_string())?;
+    if payload.get("ok").and_then(serde_json::Value::as_bool) == Some(true) {
+        Ok(())
+    } else {
+        Err(payload
+            .get("error")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Backend не применил правила процессов.")
+            .to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::enforcement_request;
+
+    #[test]
+    fn enforcement_requests_are_valid_json() {
+        for launch_cycle in [true, false] {
+            let request: serde_json::Value = serde_json::from_str(enforcement_request(launch_cycle))
+                .expect("monitor request must be valid JSON");
+            assert_eq!(request["action"], "processes.enforce");
+            assert_eq!(request["launch_cycle"], launch_cycle);
+        }
+    }
+}
+
 #[tauri::command]
 fn backend_request(app: AppHandle, gate: State<BackendWorkGate>, request: String) -> Result<String, String> {
     let is_scan = request.contains("\"action\":\"processes.") || request.contains("\"action\":\"network.");
@@ -163,7 +204,38 @@ pub fn run() {
             if !is_autostart_launch() {
                 show_main_window(app.handle());
             }
-            thread::spawn(move || { let mut first = true; loop { thread::sleep(Duration::from_secs(1)); let state = handle.state::<MonitorState>(); if !state.enabled.load(Ordering::Acquire) { first = true; continue; } let interval = state.interval.load(Ordering::Acquire).max(5); static TICK: AtomicU64 = AtomicU64::new(0); let tick=TICK.fetch_add(1, Ordering::Relaxed)+1; if tick % interval == 0 { let body = if first { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":true}"# } else { r#"{\"action\":\"processes.enforce\",\"launch_cycle\":false}"# }; let gate = handle.state::<BackendWorkGate>(); if let Ok(_guard) = gate.0.lock() { let _ = backend_request_impl(&handle, body); } first=false; } } });
+            thread::spawn(move || {
+                let mut first = true;
+                let mut elapsed = 0;
+                loop {
+                    thread::sleep(Duration::from_secs(1));
+                    let state = handle.state::<MonitorState>();
+                    if !state.enabled.load(Ordering::Acquire) {
+                        first = true;
+                        elapsed = 0;
+                        continue;
+                    }
+
+                    // Do the launch-only pass as soon as monitoring becomes
+                    // active, then use the configured interval for permanent
+                    // rules.  A failed pass keeps `first` true and retries on
+                    // the next tick, instead of losing the launch-only pass.
+                    let interval = state.interval.load(Ordering::Acquire).max(5);
+                    elapsed += 1;
+                    if first || elapsed >= interval {
+                        let gate = handle.state::<BackendWorkGate>();
+                        if let Ok(_guard) = gate.0.lock() {
+                            match enforce_processes(&handle, first) {
+                                Ok(()) => {
+                                    first = false;
+                                    elapsed = 0;
+                                }
+                                Err(error) => eprintln!("Не удалось применить правила процессов: {error}"),
+                            }
+                        };
+                    }
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
