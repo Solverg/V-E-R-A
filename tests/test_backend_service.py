@@ -70,9 +70,19 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(result["data"]["scan_interval_sec"], 60)
         self.assertNotIn("gemini_api_key", self.service.handle({"action": "settings.get"})["data"])
 
-    def test_monitoring_interval_has_a_safe_lower_bound(self):
+    def test_monitoring_interval_uses_the_nearest_supported_option(self):
         result = self.service.handle({"action": "settings.set", "values": {"scan_interval_sec": 1}})
-        self.assertEqual(result["data"]["scan_interval_sec"], 5)
+        self.assertEqual(result["data"]["scan_interval_sec"], 30)
+
+    def test_legacy_interval_is_migrated_to_the_nearest_option(self):
+        settings_path = Path(self.temp_dir.name) / "settings.json"
+        settings_path.write_text(json.dumps({"scan_interval_sec": 140}), encoding="utf-8")
+
+        migrated = BackendService(Path(self.temp_dir.name)).handle({"action": "settings.get"})["data"]
+
+        self.assertEqual(migrated["scan_interval_sec"], 180)
+        persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["scan_interval_sec"], 180)
 
     def test_legacy_settings_without_monitoring_flag_keep_enforcement_enabled(self):
         settings_path = Path(self.temp_dir.name) / "settings.json"

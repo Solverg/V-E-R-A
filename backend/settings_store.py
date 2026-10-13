@@ -6,12 +6,22 @@ from typing import Any
 from backend.secure_storage import SecureStorageError, protect_text, unprotect_text
 
 SECRET_KEYS={"gemini_api_key","groq_api_key"}
-DEFAULTS={"provider":"gemini","gemini_model":"gemini-3.1-flash-preview","scan_interval_sec":5,"monitoring_enabled":False,"autostart":False,"minimize_to_tray":True,"show_notifications":True,"secrets":{}}
+SCAN_INTERVALS=(30,60,180,300,600)
+DEFAULTS={"provider":"gemini","gemini_model":"gemini-3.1-flash-preview","scan_interval_sec":30,"monitoring_enabled":False,"autostart":False,"minimize_to_tray":True,"show_notifications":True,"secrets":{}}
+
+def normalize_scan_interval(value: Any) -> int:
+    """Return the supported interval closest to a legacy seconds value."""
+    try:
+        seconds=int(value)
+    except (TypeError,ValueError):
+        seconds=DEFAULTS["scan_interval_sec"]
+    return min(SCAN_INTERVALS,key=lambda interval:(abs(interval-seconds),interval))
 
 class SettingsStore:
     def __init__(self, data_dir: Path): self.path=data_dir/"settings.json"; self.data=self._load()
     def _load(self):
         data=dict(DEFAULTS); data["secrets"]={}
+        migrated_interval=False
         try:
             raw=json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(raw,dict):
@@ -28,6 +38,14 @@ class SettingsStore:
                     if raw.get(key): data.setdefault("_legacy",{})[key]=str(raw[key])
         except (OSError,json.JSONDecodeError): pass
         data["secrets"] = data.get("secrets") if isinstance(data.get("secrets"),dict) else {}
+        normalized_interval=normalize_scan_interval(data.get("scan_interval_sec"))
+        migrated_interval=data.get("scan_interval_sec") != normalized_interval
+        data["scan_interval_sec"]=normalized_interval
+        if migrated_interval:
+            # Persist the selected option so monitoring and the UI agree after
+            # upgrade, even before the user next edits the settings.
+            self.data=data
+            self._save()
         return data
     def _save(self):
         self.path.parent.mkdir(parents=True,exist_ok=True)
@@ -50,9 +68,6 @@ class SettingsStore:
                     except SecureStorageError as exc: raise ValueError("Не удалось безопасно сохранить API-ключ.") from exc
                 else: self.data["secrets"].pop(key,None)
             elif key in DEFAULTS and key != "secrets": self.data[key]=value
-        # A full process scan every second competes with the desktop UI and
-        # can keep low-end machines permanently busy.  Five seconds is still
-        # responsive for enforcement while leaving room for normal work.
-        self.data["scan_interval_sec"]=max(5,min(60,int(self.data.get("scan_interval_sec",5))))
+        self.data["scan_interval_sec"]=normalize_scan_interval(self.data.get("scan_interval_sec"))
         self.data["monitoring_enabled"]=bool(self.data.get("monitoring_enabled"))
         self._save(); return self.public()
