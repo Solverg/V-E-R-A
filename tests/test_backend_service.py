@@ -70,9 +70,36 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(result["data"]["scan_interval_sec"], 60)
         self.assertNotIn("gemini_api_key", self.service.handle({"action": "settings.get"})["data"])
 
+    def test_empty_key_field_keeps_an_existing_key_until_explicitly_removed(self):
+        with patch("backend.settings_store.protect_text", return_value="encrypted"), patch("backend.settings_store.unprotect_text", return_value="test-key"):
+            self.service.handle({"action": "settings.set", "values": {"gemini_api_key": "test-key"}})
+            public = self.service.handle({"action": "settings.get"})["data"]
+            self.assertTrue(public["has_gemini_api_key"])
+            self.assertNotIn("gemini_api_key", public)
+
+            self.service.handle({"action": "settings.set", "values": {"gemini_api_key": ""}})
+            self.assertEqual(self.service.settings.secret("gemini_api_key"), "test-key")
+
+            self.service.handle({"action": "settings.set", "values": {"clear_secrets": ["gemini_api_key"]}})
+            self.assertFalse(self.service.handle({"action": "settings.get"})["data"]["has_gemini_api_key"])
+
+    def test_provider_check_uses_the_selected_saved_provider(self):
+        with patch("backend.service.chat", return_value={"text": "OK", "model": "gemini-test"}) as provider_chat:
+            result = self.service.handle({"action": "settings.test_provider", "provider": "gemini"})
+        self.assertEqual(result["data"], {"provider": "gemini", "model": "gemini-test", "status": "ok"})
+        provider_chat.assert_called_once_with(self.service.settings, [], "Ответь ровно: OK")
+
     def test_monitoring_interval_uses_the_nearest_supported_option(self):
         result = self.service.handle({"action": "settings.set", "values": {"scan_interval_sec": 1}})
         self.assertEqual(result["data"]["scan_interval_sec"], 30)
+
+    def test_update_download_preference_defaults_to_enabled_and_is_saved(self):
+        self.assertTrue(self.service.handle({"action": "settings.get"})["data"]["auto_download_updates"])
+
+        saved = self.service.handle({"action": "settings.set", "values": {"auto_download_updates": False, "pending_update_version": "0.4.7"}})["data"]
+
+        self.assertFalse(saved["auto_download_updates"])
+        self.assertEqual(saved["pending_update_version"], "0.4.7")
 
     def test_legacy_interval_is_migrated_to_the_nearest_option(self):
         settings_path = Path(self.temp_dir.name) / "settings.json"

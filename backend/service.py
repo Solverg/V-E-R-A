@@ -273,6 +273,15 @@ class BackendService:
         processes = self.list_processes()
         return {"processes": processes, "statistics": self._statistics_for(processes)}
 
+    def test_provider(self, provider: str) -> dict[str, str]:
+        """Verify the saved key with a tiny real request without exposing it."""
+        selected = provider if provider in {"gemini", "groq"} else self.settings.public().get("provider", "gemini")
+        configured = self.settings.public().get("provider", "gemini")
+        if selected != configured:
+            raise ValueError("Сначала сохраните выбранного AI-провайдера.")
+        result = chat(self.settings, [], "Ответь ровно: OK")
+        return {"provider": selected, "model": str(result.get("model") or ""), "status": "ok"}
+
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         action = request.get("action")
         if action == "health":
@@ -332,6 +341,8 @@ class BackendService:
             return {"ok": True, "data": self.settings.public()}
         if action == "settings.set":
             return {"ok": True, "data": self.settings.set(dict(request.get("values") or {}))}
+        if action == "settings.test_provider":
+            return {"ok": True, "data": self.test_provider(str(request.get("provider") or ""))}
         if action == "assistant.chat":
             return {"ok": True, "data": chat(self.settings, list(request.get("history") or []), str(request.get("message") or ""))}
         if action == "process.describe":

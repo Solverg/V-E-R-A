@@ -162,6 +162,13 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        // Windows can start the app from the shortcut while an autostarted
+        // copy is already hidden in the notification area.  Accept the new
+        // launch only as a request to restore that existing copy; otherwise
+        // each process owns its own tray icon.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(MonitorState { enabled: AtomicBool::new(false), interval: AtomicU64::new(5) })
         .manage(BackendWorkGate::default())

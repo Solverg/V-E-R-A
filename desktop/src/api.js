@@ -72,7 +72,7 @@ async function requestDemo(action, payload = {}) {
     { name: "Game Launcher", source: "FOLDER_USER", target_path: "C:\\Apps\\Game Launcher\\launcher.exe", status: "paused", raw_key: "C:\\Startup\\Game Launcher.lnk.disabled", needs_admin: false },
     { name: "System maintenance", source: "TASK_SCHEDULER", target_path: "C:\\Windows\\System32\\maintenance.exe", status: "active", raw_key: "\\System maintenance", needs_admin: true },
   ] };
-  if (action === "settings.get" || action === "settings.set") return { ok: true, data: { provider: "gemini", gemini_model: "gemini-3.1-flash-preview", scan_interval_sec: 5, monitoring_enabled: false, autostart: false, minimize_to_tray: true, show_notifications: true } };
+  if (action === "settings.get" || action === "settings.set") return { ok: true, data: { provider: "gemini", gemini_model: "gemini-3.1-flash-preview", scan_interval_sec: 5, monitoring_enabled: false, autostart: false, minimize_to_tray: true, show_notifications: true, auto_download_updates: true, pending_update_version: "" } };
   if (action === "process.describe") return { ok: true, data: { description: "Описание доступно в Tauri-приложении.", status: "unknown" } };
   if (action === "assistant.chat") return { ok: true, data: { text: "AI-доступен в Tauri-приложении после настройки ключа.", model: "preview" } };
   return { ok: true, data: true };

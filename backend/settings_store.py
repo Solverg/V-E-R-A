@@ -7,7 +7,9 @@ from backend.secure_storage import SecureStorageError, protect_text, unprotect_t
 
 SECRET_KEYS={"gemini_api_key","groq_api_key"}
 SCAN_INTERVALS=(30,60,180,300,600)
-DEFAULTS={"provider":"gemini","gemini_model":"gemini-3.1-flash-preview","scan_interval_sec":30,"monitoring_enabled":False,"autostart":False,"minimize_to_tray":True,"show_notifications":True,"secrets":{}}
+# These are stable text models that are currently available to new projects.
+# Do not make preview IDs the default: their retirement breaks saved settings.
+DEFAULTS={"provider":"gemini","gemini_model":"gemini-3.5-flash-lite","groq_model":"openai/gpt-oss-20b","scan_interval_sec":30,"monitoring_enabled":False,"autostart":False,"minimize_to_tray":True,"show_notifications":True,"auto_download_updates":True,"pending_update_version":"","secrets":{}}
 
 def normalize_scan_interval(value: Any) -> int:
     """Return the supported interval closest to a legacy seconds value."""
@@ -52,7 +54,12 @@ class SettingsStore:
         outgoing={k:v for k,v in self.data.items() if k not in SECRET_KEYS and k!="_legacy"}
         self.path.write_text(json.dumps(outgoing,ensure_ascii=False,indent=2),encoding="utf-8")
     def public(self):
-        return {key:value for key,value in self.data.items() if key not in {"secrets","_legacy"}}
+        public={key:value for key,value in self.data.items() if key not in {"secrets","_legacy"}}
+        # The UI needs an unambiguous saved/not-saved state, but must never
+        # receive the secret itself.
+        public["has_gemini_api_key"]=bool((self.data.get("_legacy") or {}).get("gemini_api_key") or self.data["secrets"].get("gemini_api_key"))
+        public["has_groq_api_key"]=bool((self.data.get("_legacy") or {}).get("groq_api_key") or self.data["secrets"].get("groq_api_key"))
+        return public
     def secret(self,key):
         legacy=(self.data.get("_legacy") or {}).get(key)
         if legacy: return legacy
@@ -60,14 +67,26 @@ class SettingsStore:
         try: return unprotect_text(record.get("value", "")) if record.get("provider")=="windows-dpapi" else ""
         except SecureStorageError: return ""
     def set(self, values:dict[str,Any]):
+        clear_secrets=set(values.pop("clear_secrets",[]) or [])
         for key,value in values.items():
             if key in SECRET_KEYS:
+                # Empty fields are normal after a reload because protected
+                # values are intentionally never returned to the UI.  Treat an
+                # empty value as "keep", and only delete via an explicit
+                # clear request.
+                if not value:
+                    continue
                 self.data.get("_legacy",{}).pop(key,None)
                 if value:
                     try: self.data["secrets"][key]={"provider":"windows-dpapi","value":protect_text(str(value))}
                     except SecureStorageError as exc: raise ValueError("Не удалось безопасно сохранить API-ключ.") from exc
-                else: self.data["secrets"].pop(key,None)
             elif key in DEFAULTS and key != "secrets": self.data[key]=value
+        for key in clear_secrets:
+            if key in SECRET_KEYS:
+                self.data.get("_legacy",{}).pop(key,None)
+                self.data["secrets"].pop(key,None)
         self.data["scan_interval_sec"]=normalize_scan_interval(self.data.get("scan_interval_sec"))
         self.data["monitoring_enabled"]=bool(self.data.get("monitoring_enabled"))
+        self.data["auto_download_updates"]=bool(self.data.get("auto_download_updates"))
+        self.data["pending_update_version"]=str(self.data.get("pending_update_version") or "")
         self._save(); return self.public()

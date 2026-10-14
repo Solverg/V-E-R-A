@@ -19,12 +19,13 @@ def chat(settings, history:list[dict], message:str):
             key=settings.secret("groq_api_key")
             if not key:raise ValueError("Укажите API-ключ Groq в настройках.")
             messages=[{"role":"system","content":SYSTEM_PROMPT}]+[{"role":"assistant" if x.get("role") in {"model","assistant"} else "user","content":str(x.get("text") or x.get("content") or "")} for x in history]+[{"role":"user","content":message}]
-            data=_request("https://api.groq.com/openai/v1/chat/completions",{"model":"llama-3.3-70b-versatile","messages":messages,"temperature":0.7},{"Content-Type":"application/json","Authorization":f"Bearer {key}"})
-            text=(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip(); model="llama-3.3-70b-versatile"
+            model=str(settings.public().get("groq_model") or "openai/gpt-oss-20b")
+            data=_request("https://api.groq.com/openai/v1/chat/completions",{"model":model,"messages":messages,"temperature":0.7},{"Content-Type":"application/json","Authorization":f"Bearer {key}"})
+            text=(((data.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
         else:
             key=settings.secret("gemini_api_key")
             if not key:raise ValueError("Укажите Gemini API-ключ в настройках.")
-            model=str(settings.public().get("gemini_model") or "gemini-3.1-flash-preview")
+            model=str(settings.public().get("gemini_model") or "gemini-3.5-flash-lite")
             contents=[{"role":"model" if x.get("role") in {"model","assistant"} else "user","parts":[{"text":str(x.get("text") or x.get("content") or "")}]} for x in history]+[{"role":"user","parts":[{"text":message}]}]
             data=_request(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",{"contents":contents,"systemInstruction":{"parts":[{"text":SYSTEM_PROMPT}]},"generationConfig":{"temperature":0.7,"maxOutputTokens":2048}},{"Content-Type":"application/json","x-goog-api-key":key})
             text=((((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or [{}])[0].get("text") or "").strip()
@@ -120,7 +121,7 @@ def _describe_with_provider(settings, prompt: str) -> str:
         data = _request(
             "https://api.groq.com/openai/v1/chat/completions",
             {
-                "model": "llama-3.3-70b-versatile",
+                "model": str(settings.public().get("groq_model") or "openai/gpt-oss-20b"),
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
@@ -135,7 +136,7 @@ def _describe_with_provider(settings, prompt: str) -> str:
     key = settings.secret("gemini_api_key")
     if not key:
         raise ValueError("Укажите Gemini API-ключ в настройках.")
-    model = str(settings.public().get("gemini_model") or "gemini-3.1-flash-preview")
+    model = str(settings.public().get("gemini_model") or "gemini-3.5-flash-lite")
     data = _request(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         {
