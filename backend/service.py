@@ -31,6 +31,8 @@ DATA_DIR_ENV = "VERA_DATA_DIR"
 LEGACY_DATA_DIR_ENV = "KRISTINA_DATA_DIR"
 DEFAULT_DATA_DIR = Path.home() / ".vera"
 LEGACY_DATA_DIR = Path.home() / ".kristina_helper"
+VERA_DESCRIPTION = "V.E.R.A. — доверенный компонент приложения, который обеспечивает защиту и управление процессами."
+VERA_PROCESS_NAMES = {"vera.exe", "vera-desktop.exe", "vera-backend.exe"}
 
 
 def resolve_data_dir() -> Path:
@@ -61,6 +63,31 @@ class BackendService:
         self.settings = SettingsStore(self.data_dir)
         self.firewall = FirewallManager(self.data_dir)
         self.session_kills = 0
+
+    @staticmethod
+    def _normal_path(path: str) -> str:
+        return os.path.normcase(os.path.abspath(str(path))) if path else ""
+
+    def is_vera_process(self, name: str, exe_path: str = "") -> bool:
+        """Identify V.E.R.A.'s own desktop and sidecar processes.
+
+        This check intentionally lives in the service, rather than only in the
+        UI: requests can also arrive from the process monitor or IPC callers.
+        """
+        app_path = self._normal_path(os.environ.get("VERA_APP_EXE", ""))
+        process_path = self._normal_path(exe_path)
+        if app_path and process_path == app_path:
+            return True
+        executable_name = Path(exe_path or name).name.lower()
+        return executable_name in VERA_PROCESS_NAMES
+
+    def _ensure_not_vera_process(self, name: str, exe_path: str = "") -> None:
+        if self.is_vera_process(name, exe_path):
+            raise ValueError("Процессы V.E.R.A. защищены: их нельзя завершить или заблокировать.")
+
+    def _ensure_not_vera_firewall_target(self, values: dict[str, Any]) -> None:
+        program = str(values.get("program") or "")
+        self._ensure_not_vera_process(Path(program).name, program)
 
     def _migrate_legacy_data(self) -> None:
         """Copy only known data files; never make old data the active location."""
@@ -132,6 +159,7 @@ class BackendService:
                 rule = exact_rule or rules.get(self.rule_key(name))
                 memory = info.get("memory_info")
                 description = cached_description(descriptions_path, name, exe_path) or {}
+                is_vera = self.is_vera_process(name, exe_path)
                 processes.append(
                     {
                         "pid": int(info["pid"]),
@@ -140,17 +168,18 @@ class BackendService:
                         "status": str(info.get("status") or ""),
                         "cpu_percent": round(float(info.get("cpu_percent") or 0), 1),
                         "memory_mb": round((memory.rss / 1024 / 1024) if memory else 0, 1),
-                        "is_blocked": bool(rule and rule.enabled),
+                        "is_blocked": bool(rule and rule.enabled) and not is_vera,
                         # The frontend needs the policy to distinguish the two
                         # rule types; a boolean alone loses that information.
-                        "block_mode": rule.mode if rule and rule.enabled else "",
+                        "block_mode": rule.mode if rule and rule.enabled and not is_vera else "",
                         # Reuse the matching rule key when a user changes its
                         # mode.  This preserves migrated name-only rules.
-                        "block_rule_exe_path": rule.exe_path if rule and rule.enabled else "",
+                        "block_rule_exe_path": rule.exe_path if rule and rule.enabled and not is_vera else "",
                         # Signature verification is deferred until this row is visible in the UI.
-                        "security_status": "unchecked",
-                        "description": description.get("description", ""),
-                        "description_status": description.get("status", "unknown"),
+                        "security_status": "verified" if is_vera else "unchecked",
+                        "description": VERA_DESCRIPTION if is_vera else description.get("description", ""),
+                        "description_status": "verified" if is_vera else description.get("status", "unknown"),
+                        "is_vera_process": is_vera,
                     }
                 )
             except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
@@ -182,6 +211,7 @@ class BackendService:
         clean_name = str(name or "").strip()
         if not clean_name:
             raise ValueError("У правила должно быть имя процесса.")
+        self._ensure_not_vera_process(clean_name, exe_path)
         rules = self._load_rules()
         key = self.rule_key(clean_name, exe_path)
         rule = rules.get(key) or BlockRule(name=clean_name, exe_path=str(exe_path or ""))
@@ -192,6 +222,7 @@ class BackendService:
         return asdict(rule)
 
     def toggle_rule(self, name: str, exe_path: str = "") -> dict[str, Any]:
+        self._ensure_not_vera_process(name, exe_path)
         rules = self._load_rules()
         rule = rules.get(self.rule_key(name, exe_path)) or rules.get(self.rule_key(name))
         if rule is None:
@@ -221,6 +252,7 @@ class BackendService:
                 raise ValueError("PID уже принадлежит другому процессу.")
             if exe_path and os.path.normcase(process.exe()) != os.path.normcase(exe_path):
                 raise ValueError("Путь процесса изменился до завершения.")
+            self._ensure_not_vera_process(process.name(), process.exe())
             process.terminate()
             try:
                 process.wait(timeout=3)
@@ -248,6 +280,8 @@ class BackendService:
 
             rule = rules.get(self.rule_key(name, exe_path)) or rules.get(self.rule_key(name))
             if not rule or not rule.enabled or (rule.mode == "kill_on_launch" and not launch_cycle):
+                continue
+            if self.is_vera_process(name, exe_path):
                 continue
             try:
                 if self.terminate_process(pid, name, exe_path):
@@ -322,10 +356,15 @@ class BackendService:
         if action == "firewall.list":
             return {"ok": True, "data": self.firewall.list()}
         if action == "firewall.create":
+            self._ensure_not_vera_firewall_target(dict(request.get("values") or {}))
             return {"ok": True, "data": self.firewall.create(dict(request.get("values") or {}))}
         if action == "firewall.update":
+            self._ensure_not_vera_firewall_target(dict(request.get("values") or {}))
             return {"ok": True, "data": self.firewall.update(str(request.get("id") or ""), dict(request.get("values") or {}))}
         if action == "firewall.toggle":
+            firewall_rule = next((rule for rule in self.firewall.list() if str(rule.get("id")) == str(request.get("id") or "")), None)
+            if firewall_rule:
+                self._ensure_not_vera_firewall_target(firewall_rule)
             return {"ok": True, "data": self.firewall.toggle(str(request.get("id") or ""))}
         if action == "firewall.delete":
             return {"ok": True, "data": self.firewall.delete(str(request.get("id") or ""))}

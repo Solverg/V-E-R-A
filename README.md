@@ -18,7 +18,7 @@ managing process, firewall, network, and startup controls.
 - Provides Network Radar: process-owned connections, risk classification,
   filtering, and public-IP metadata.
 - Manages V.E.R.A.-owned Windows Firewall rules for a program, direction,
-  protocol, local ports, remote IP addresses, and network profile.
+  protocol, local and remote ports, remote IP addresses, and network profile.
 - Lists and pauses/resumes startup entries from Run keys, Startup folders, and
   LogonTrigger tasks.
 - Optionally connects to Gemini or Groq for chat and cached process
@@ -37,7 +37,9 @@ for terminology rules.
   it can copy known legacy `blocked.json` and `settings.json` files from
   `.kristina_helper`; see [migration parity](docs/migration-parity.md).
 - Changing Firewall rules and some startup entries requires Windows elevation.
-  Without it, Windows can return **Access Denied**.
+  When a Firewall change is requested from a normal V.E.R.A. session, it asks
+  for UAC confirmation only for that operation; declining the prompt leaves
+  the existing rule unchanged.
 - Digital-signature status is evidence about a file's signature, not a malware
   verdict. Review a file's source before allowing or blocking it.
 - Network Radar's external-IP lookup contacts public IP-information services.

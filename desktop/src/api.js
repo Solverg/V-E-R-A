@@ -1,6 +1,7 @@
 import { invoke, isTauri as isTauriRuntime } from "@tauri-apps/api/core";
 
 const demoProcesses = [
+  { pid: 1004, name: "vera-desktop.exe", cpu_percent: 0.8, memory_mb: 112.4, status: "running", is_blocked: false, block_mode: "", security_status: "verified", is_vera_process: true, exe: "C:\\Program Files\\V.E.R.A.\\vera-desktop.exe", description: "V.E.R.A. — доверенный компонент приложения, который обеспечивает защиту и управление процессами.", description_status: "verified" },
   { pid: 1012, name: "explorer.exe", cpu_percent: 1.2, memory_mb: 164.8, status: "running", is_blocked: false, block_mode: "", security_status: "verified", exe: "C:\\Windows\\explorer.exe", description: "Отвечает за рабочий стол, панель задач и окна Проводника Windows.", description_status: "verified" },
   { pid: 9420, name: "chrome.exe", cpu_percent: 4.6, memory_mb: 492.7, status: "running", is_blocked: false, block_mode: "", security_status: "verified", exe: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", description: "Обеспечивает работу вкладок и фоновых компонентов браузера.", description_status: "verified" },
   { pid: 11804, name: "discord.exe", cpu_percent: 0.3, memory_mb: 238.4, status: "sleeping", is_blocked: true, block_mode: "permanent", security_status: "unknown", exe: "C:\\Users\\User\\AppData\\Local\\Discord\\discord.exe" },
@@ -72,7 +73,7 @@ async function requestDemo(action, payload = {}) {
     { name: "Game Launcher", source: "FOLDER_USER", target_path: "C:\\Apps\\Game Launcher\\launcher.exe", status: "paused", raw_key: "C:\\Startup\\Game Launcher.lnk.disabled", needs_admin: false },
     { name: "System maintenance", source: "TASK_SCHEDULER", target_path: "C:\\Windows\\System32\\maintenance.exe", status: "active", raw_key: "\\System maintenance", needs_admin: true },
   ] };
-  if (action === "settings.get" || action === "settings.set") return { ok: true, data: { provider: "gemini", gemini_model: "gemini-3.1-flash-preview", scan_interval_sec: 5, monitoring_enabled: false, autostart: false, minimize_to_tray: true, show_notifications: true, auto_download_updates: true, pending_update_version: "" } };
+  if (action === "settings.get" || action === "settings.set") return { ok: true, data: { provider: "gemini", gemini_model: "gemini-3.1-flash-preview", scan_interval_sec: 30, monitoring_enabled: false, autostart: false, minimize_to_tray: true, show_notifications: true, auto_download_updates: true, pending_update_version: "" } };
   if (action === "process.describe") return { ok: true, data: { description: "Описание доступно в Tauri-приложении.", status: "unknown" } };
   if (action === "assistant.chat") return { ok: true, data: { text: "AI-доступен в Tauri-приложении после настройки ключа.", model: "preview" } };
   return { ok: true, data: true };

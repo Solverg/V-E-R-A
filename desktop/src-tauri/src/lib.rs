@@ -16,6 +16,8 @@ use tauri::{AppHandle, Manager, State};
 const SIDECAR_DIRECTORY: &str = "binaries/vera-backend-x86_64-pc-windows-msvc";
 const SIDECAR_EXECUTABLE: &str = "vera-backend-x86_64-pc-windows-msvc.exe";
 const AUTOSTART_ARGUMENT: &str = "--autostart";
+const SCAN_INTERVALS: [u64; 5] = [30, 60, 180, 300, 600];
+const DEFAULT_SCAN_INTERVAL_SECONDS: u64 = 30;
 
 fn is_autostart_launch() -> bool {
     std::env::args_os().any(|argument| argument == AUTOSTART_ARGUMENT)
@@ -118,7 +120,7 @@ fn enforce_processes(app: &AppHandle, launch_cycle: bool) -> Result<(), String> 
 
 #[cfg(test)]
 mod tests {
-    use super::enforcement_request;
+    use super::{enforcement_request, SCAN_INTERVALS};
 
     #[test]
     fn enforcement_requests_are_valid_json() {
@@ -128,6 +130,11 @@ mod tests {
             assert_eq!(request["action"], "processes.enforce");
             assert_eq!(request["launch_cycle"], launch_cycle);
         }
+    }
+
+    #[test]
+    fn monitor_intervals_match_settings_options() {
+        assert_eq!(SCAN_INTERVALS, [30, 60, 180, 300, 600]);
     }
 }
 
@@ -144,7 +151,9 @@ fn backend_request(app: AppHandle, gate: State<BackendWorkGate>, request: String
 
 #[tauri::command]
 fn monitor_configure(state: State<MonitorState>, enabled: bool, interval_seconds: u64) -> Result<(), String> {
-    if !(5..=60).contains(&interval_seconds) { return Err("Интервал мониторинга должен быть от 5 до 60 секунд.".into()); }
+    if !SCAN_INTERVALS.contains(&interval_seconds) {
+        return Err("Выберите один из доступных интервалов проверки: 30 сек., 1, 3, 5 или 10 мин.".into());
+    }
     state.interval.store(interval_seconds, Ordering::Release); state.enabled.store(enabled, Ordering::Release); Ok(())
 }
 
@@ -170,7 +179,7 @@ pub fn run() {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(MonitorState { enabled: AtomicBool::new(false), interval: AtomicU64::new(5) })
+        .manage(MonitorState { enabled: AtomicBool::new(false), interval: AtomicU64::new(DEFAULT_SCAN_INTERVAL_SECONDS) })
         .manage(BackendWorkGate::default())
         .setup(|app| {
             let open = MenuItem::with_id(app, "open", "Открыть V.E.R.A.", true, None::<&str>)?;
@@ -227,7 +236,7 @@ pub fn run() {
                     // active, then use the configured interval for permanent
                     // rules.  A failed pass keeps `first` true and retries on
                     // the next tick, instead of losing the launch-only pass.
-                    let interval = state.interval.load(Ordering::Acquire).max(5);
+                    let interval = state.interval.load(Ordering::Acquire).max(DEFAULT_SCAN_INTERVAL_SECONDS);
                     elapsed += 1;
                     if first || elapsed >= interval {
                         let gate = handle.state::<BackendWorkGate>();

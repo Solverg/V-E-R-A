@@ -65,6 +65,35 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(modes_by_name, {"permanent.exe": "permanent", "launch.exe": "kill_on_launch"})
         self.assertTrue(all(process["block_rule_exe_path"] == "" for process in listed))
 
+    def test_vera_process_is_trusted_and_never_shows_a_block_rule(self):
+        self.service._save_rules({
+            self.service.rule_key("vera-desktop.exe", r"C:\\Other\\vera-desktop.exe"): BlockRule("vera-desktop.exe", mode="permanent", exe_path=r"C:\\Other\\vera-desktop.exe"),
+        })
+        processes = [
+            SimpleNamespace(info={"pid": 103, "name": "vera-desktop.exe", "exe": r"C:\\Other\\vera-desktop.exe", "status": "running", "cpu_percent": 0, "memory_info": None}),
+        ]
+
+        with patch("backend.service.psutil.process_iter", return_value=processes):
+            listed = self.service.list_processes()
+
+        self.assertTrue(listed[0]["is_vera_process"])
+        self.assertFalse(listed[0]["is_blocked"])
+        self.assertEqual(listed[0]["block_mode"], "")
+        self.assertEqual(listed[0]["security_status"], "verified")
+        self.assertIn("доверенный", listed[0]["description"])
+
+    def test_vera_process_cannot_be_added_to_block_rules(self):
+        with self.assertRaisesRegex(ValueError, "защищены"):
+            self.service.upsert_rule("vera-desktop.exe", mode="kill_on_launch")
+
+        self.service._save_rules({self.service.rule_key("vera-desktop.exe"): BlockRule("vera-desktop.exe", enabled=False)})
+        with self.assertRaisesRegex(ValueError, "защищены"):
+            self.service.toggle_rule("vera-desktop.exe")
+
+    def test_vera_process_cannot_be_blocked_by_firewall(self):
+        with self.assertRaisesRegex(ValueError, "защищены"):
+            self.service.handle({"action": "firewall.create", "values": {"program": r"C:\\Program Files\\V.E.R.A.\\vera-desktop.exe"}})
+
     def test_settings_never_returns_secrets(self):
         result = self.service.handle({"action": "settings.set", "values": {"scan_interval_sec": 99}})
         self.assertEqual(result["data"]["scan_interval_sec"], 60)
@@ -276,6 +305,67 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(updated["id"], created["id"])
         self.assertEqual(updated["action"], "allow")
         self.assertTrue(updated["system_name"].startswith("V.E.R.A. Firewall"))
+
+    def test_firewall_requests_uac_after_netsh_reports_access_denied(self):
+        denied = SimpleNamespace(returncode=1, stdout="Access is denied.", stderr="")
+        elevated = SimpleNamespace(returncode=0, stdout="", stderr="")
+        arguments = ["advfirewall", "firewall", "add", "rule", "name=V.E.R.A. Firewall #test"]
+
+        with patch("backend.firewall.subprocess.run", side_effect=[denied, elevated]) as run:
+            FirewallManager._run_netsh(arguments)
+
+        self.assertEqual(run.call_args_list[0].args[0], ["netsh", *arguments])
+        launcher = run.call_args_list[1].args[0]
+        self.assertEqual(launcher[0].lower(), "powershell.exe")
+        self.assertIn("-Command", launcher)
+        self.assertIn("-Verb RunAs", launcher[-1])
+        self.assertNotIn("V.E.R.A. Firewall #test", launcher[-1])
+
+    def test_firewall_reports_cancelled_uac_request(self):
+        denied = SimpleNamespace(returncode=1, stdout="Access is denied.", stderr="")
+        cancelled = SimpleNamespace(returncode=1223, stdout="", stderr="The operation was canceled by user.")
+
+        with patch("backend.firewall.subprocess.run", side_effect=[denied, cancelled]):
+            with self.assertRaisesRegex(PermissionError, "отменено"):
+                FirewallManager._run_netsh(["advfirewall", "firewall", "add", "rule", "name=V.E.R.A. Firewall #test"])
+
+    def test_firewall_explains_when_windows_cannot_start_the_elevated_process(self):
+        denied = SimpleNamespace(returncode=1, stdout="Access is denied.", stderr="")
+        unavailable = SimpleNamespace(returncode=1, stdout="", stderr="Unknown error (0xC0000142)")
+
+        with patch("backend.firewall.subprocess.run", side_effect=[denied, unavailable]):
+            with self.assertRaisesRegex(RuntimeError, "0xC0000142"):
+                FirewallManager._run_netsh(["advfirewall", "firewall", "add", "rule", "name=V.E.R.A. Firewall #test"])
+
+    def test_firewall_uses_remote_port_and_updates_without_removing_rule(self):
+        executable = Path(self.temp_dir.name) / "demo.exe"
+        executable.touch()
+        manager = FirewallManager(Path(self.temp_dir.name))
+        values = {"label": "Block HTTPS", "program": str(executable), "action": "block", "direction": "outbound", "protocol": "tcp", "local_port": "any", "remote_port": "443", "remote_ip": "any", "profile": "any"}
+
+        with patch.object(FirewallManager, "_run_netsh") as netsh:
+            created = manager.create(values)
+            manager.toggle(created["id"])
+            updated = manager.update(created["id"], {**values, "label": "Block HTTPS elsewhere", "remote_port": "8443"})
+
+        calls = [call.args[0] for call in netsh.call_args_list]
+        self.assertIn("remoteport=443", calls[0])
+        self.assertEqual(calls[-1][2:4], ["set", "rule"])
+        self.assertIn("remoteport=8443", calls[-1])
+        self.assertFalse(updated["enabled"])
+        self.assertNotIn("delete", [argument for call in calls for argument in call])
+
+    def test_firewall_rolls_back_system_rule_when_local_save_fails(self):
+        executable = Path(self.temp_dir.name) / "demo.exe"
+        executable.touch()
+        manager = FirewallManager(Path(self.temp_dir.name))
+        values = {"label": "Block demo", "program": str(executable), "action": "block", "direction": "outbound", "protocol": "any", "local_port": "any", "remote_ip": "any", "profile": "any"}
+
+        with patch.object(FirewallManager, "_run_netsh") as netsh, patch.object(manager, "_save", side_effect=OSError("disk full")):
+            with self.assertRaisesRegex(RuntimeError, "отменено"):
+                manager.create(values)
+
+        self.assertEqual([call.args[0][2] for call in netsh.call_args_list], ["add", "delete"])
 
     def test_redacts_user_name_from_path(self):
         self.assertEqual(redact_path(r"C:\Users\Alice\AppData\app.exe"), r"C:\Users\<user>\AppData\app.exe")

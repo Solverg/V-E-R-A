@@ -16,7 +16,7 @@ legacy source path is deliberately not part of release documentation.
 
 ## Monitoring design
 
-The Rust Tauri shell owns the scheduler. It runs a short-lived sidecar request only at the configured 1–60 second interval and calls `processes.enforce`; this avoids a Python daemon and keeps every Windows action in the sidecar. `kill_on_launch` rules are sent only in the first enabled monitor cycle; `permanent` rules run every cycle. Process PID, name, and executable path are checked again directly before termination.
+The Rust Tauri shell owns the scheduler. It runs a short-lived sidecar request only at the configured 30-second, 1-minute, 3-minute, 5-minute, or 10-minute interval and calls `processes.enforce`; this avoids a Python daemon and keeps every Windows action in the sidecar. `kill_on_launch` rules are sent only in the first enabled monitor cycle; `permanent` rules run every cycle. Process PID, name, and executable path are checked again directly before termination.
 
 ## Update delivery
 
