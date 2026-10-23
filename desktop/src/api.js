@@ -6,6 +6,33 @@ const demoProcesses = [
   { pid: 9420, name: "chrome.exe", cpu_percent: 4.6, memory_mb: 492.7, status: "running", is_blocked: false, block_mode: "", security_status: "verified", exe: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", description: "Обеспечивает работу вкладок и фоновых компонентов браузера.", description_status: "verified" },
   { pid: 11804, name: "discord.exe", cpu_percent: 0.3, memory_mb: 238.4, status: "sleeping", is_blocked: true, block_mode: "permanent", security_status: "unknown", exe: "C:\\Users\\User\\AppData\\Local\\Discord\\discord.exe" },
 ];
+
+let demoBlockRules = [
+  { name: "discord.exe", exe_path: "C:\\Users\\User\\AppData\\Local\\Discord\\discord.exe", mode: "permanent", enabled: true, kill_count: 3, description: "Правило для демонстрации постоянного контроля." },
+  { name: "Updater.exe", exe_path: "C:\\Apps\\Updater.exe", mode: "kill_on_launch", enabled: true, kill_count: 6, description: "Завершается только при запуске V.E.R.A." },
+];
+
+function demoRuleKey(name, exePath = "") {
+  return `${String(name || "").trim().toLowerCase()}|${String(exePath || "").trim().toLowerCase()}`;
+}
+
+function syncDemoProcessRule(rule, enabled) {
+  demoProcesses.forEach(process => {
+    if (demoRuleKey(process.name, process.exe) !== demoRuleKey(rule.name, rule.exe_path)) return;
+    process.is_blocked = enabled;
+    process.block_mode = enabled ? rule.mode : "";
+    process.block_rule_exe_path = enabled ? rule.exe_path : "";
+  });
+}
+
+function demoProcessStatistics() {
+  return {
+    total_processes: demoProcesses.length,
+    active_rules: demoBlockRules.filter(rule => rule.enabled).length,
+    active_blocked_processes: demoProcesses.filter(process => process.is_blocked).length,
+    session_terminated: 0,
+  };
+}
 let demoFirewallRules = [
   { id: "demo-chrome", label: "Chrome: без интернета", program: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe", action: "block", direction: "outbound", protocol: "any", local_port: "any", remote_ip: "any", profile: "any", enabled: true },
   { id: "demo-discord", label: "Discord: разрешить интернет", program: "C:\\Users\\User\\AppData\\Local\\Discord\\discord.exe", action: "allow", direction: "outbound", protocol: "tcp", local_port: "any", remote_ip: "any", profile: "private", enabled: false },
@@ -40,14 +67,34 @@ const isTauri = () => isTauriRuntime();
 async function requestDemo(action, payload = {}) {
   if (action === "health") return { ok: true, data: { service: "demo" } };
   if (action === "processes.list") return { ok: true, data: demoProcesses };
-  if (action === "processes.snapshot") return { ok: true, data: { processes: demoProcesses, statistics: { total_processes: demoProcesses.length, active_rules: 1, active_blocked_processes: 1, session_terminated: 0 } } };
+  if (action === "processes.snapshot") return { ok: true, data: { processes: demoProcesses, statistics: demoProcessStatistics() } };
   if (action === "processes.verify_signatures") return { ok: true, data: (payload.processes || []).map(({ pid, exe }) => ({ pid, exe, security_status: "verified" })) };
   if (action === "processes.icons") return { ok: true, data: (payload.processes || []).map(({ pid, exe }) => ({ pid, exe, icon: "" })) };
-  if (action === "rules.list") return { ok: true, data: [
-    ...demoProcesses.filter((item) => item.is_blocked).map((item) => ({ ...item, kill_count: 3, description: "Правило для демонстрации постоянного контроля." })),
-    { name: "Updater.exe", exe_path: "C:\\Apps\\Updater.exe", mode: "kill_on_launch", enabled: true, kill_count: 6, description: "Завершается только при запуске V.E.R.A." },
-  ] };
-  if (action === "processes.statistics") return { ok: true, data: { total_processes: demoProcesses.length, active_rules: 1, active_blocked_processes: 1, session_terminated: 0 } };
+  if (action === "rules.list") return { ok: true, data: demoBlockRules };
+  if (action === "rules.upsert") {
+    const name = String(payload.name || "").trim(), exePath = String(payload.exe_path || ""), mode = payload.mode === "kill_on_launch" ? "kill_on_launch" : "permanent";
+    if (!name) throw new Error("У правила должно быть имя процесса.");
+    const key = demoRuleKey(name, exePath), existing = demoBlockRules.find(rule => demoRuleKey(rule.name, rule.exe_path) === key);
+    const rule = { ...(existing || { name, exe_path: exePath, kill_count: 0 }), mode, enabled: true };
+    demoBlockRules = [...demoBlockRules.filter(item => demoRuleKey(item.name, item.exe_path) !== key), rule];
+    syncDemoProcessRule(rule, true);
+    return { ok: true, data: rule };
+  }
+  if (action === "rules.toggle") {
+    const key = demoRuleKey(payload.name, payload.exe_path), rule = demoBlockRules.find(item => demoRuleKey(item.name, item.exe_path) === key);
+    if (!rule) throw new Error("Правило не найдено.");
+    rule.enabled = !rule.enabled;
+    syncDemoProcessRule(rule, rule.enabled);
+    return { ok: true, data: rule };
+  }
+  if (action === "rules.delete") {
+    const key = demoRuleKey(payload.name, payload.exe_path), rule = demoBlockRules.find(item => demoRuleKey(item.name, item.exe_path) === key);
+    if (!rule) return { ok: true, data: false };
+    demoBlockRules = demoBlockRules.filter(item => demoRuleKey(item.name, item.exe_path) !== key);
+    syncDemoProcessRule(rule, false);
+    return { ok: true, data: true };
+  }
+  if (action === "processes.statistics") return { ok: true, data: demoProcessStatistics() };
   if (action === "network.list") return { ok: true, data: [] };
   if (action === "network.public_ip") return { ok: true, data: { ip: "203.0.113.42", country_code: "GE", country_name: "Грузия", city: "Тбилиси", provider: "V.E.R.A. Preview", asn: "AS64500" } };
   if (action === "network.snapshot") return { ok: true, data: { connections: [], public_ip: { ip: "203.0.113.42", country_code: "GE", country_name: "Грузия", city: "Тбилиси", provider: "V.E.R.A. Preview", asn: "AS64500" } } };

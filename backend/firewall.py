@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import ipaddress
 import json
+import locale
 import re
 import subprocess
 import uuid
@@ -48,6 +50,15 @@ class FirewallManager:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         payload = sorted(rules.values(), key=lambda item: (str(item.get("label", "")).lower(), str(item["id"])))
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @staticmethod
+    def _netsh_encoding() -> str:
+        """netsh is a console program and writes through the OEM code page."""
+        try:
+            code_page = ctypes.windll.kernel32.GetOEMCP()
+        except (AttributeError, OSError):
+            code_page = 0
+        return f"cp{code_page}" if code_page else locale.getencoding()
 
     @staticmethod
     def _command_output(result: subprocess.CompletedProcess[str]) -> str:
@@ -124,7 +135,15 @@ class FirewallManager:
     @classmethod
     def _run_netsh(cls, arguments: list[str]) -> None:
         try:
-            result = subprocess.run(["netsh", *arguments], capture_output=True, text=True, encoding="utf-8", errors="replace", check=False, timeout=15)
+            result = subprocess.run(
+                ["netsh", *arguments],
+                capture_output=True,
+                text=True,
+                encoding=cls._netsh_encoding(),
+                errors="replace",
+                check=False,
+                timeout=15,
+            )
         except FileNotFoundError as exc:
             raise RuntimeError("Windows Firewall недоступен: не найдена команда netsh.") from exc
         except subprocess.TimeoutExpired as exc:
@@ -196,6 +215,10 @@ class FirewallManager:
         profile = str(values.get("profile") or "any").lower()
         if action not in ACTIONS or direction not in DIRECTIONS or protocol not in PROTOCOLS or profile not in PROFILES:
             raise ValueError("Недопустимые параметры правила Firewall.")
+        local_port = self._ports(values.get("local_port", ""))
+        remote_port = self._ports(values.get("remote_port", ""))
+        if protocol == "any" and (local_port != "any" or remote_port != "any"):
+            raise ValueError("Для ограничения портов выберите протокол TCP или UDP.")
         return {
             "id": rule_id,
             "system_name": system_name,
@@ -204,27 +227,45 @@ class FirewallManager:
             "action": action,
             "direction": direction,
             "protocol": protocol,
-            "local_port": self._ports(values.get("local_port", "")),
-            "remote_port": self._ports(values.get("remote_port", "")),
+            "local_port": local_port,
+            "remote_port": remote_port,
             "remote_ip": self._remote_addresses(values.get("remote_ip", "")),
             "profile": profile,
             "enabled": True,
         }
 
+    @staticmethod
+    def _rule_fields(record: dict[str, Any]) -> list[str]:
+        fields = [
+            f"dir={DIRECTIONS[record['direction']]}",
+            f"action={record['action']}",
+            f"program={record['program']}",
+            f"enable={'yes' if record.get('enabled', True) else 'no'}",
+            f"profile={record['profile']}",
+            f"protocol={record['protocol'].upper()}",
+        ]
+        # Windows netsh rejects even `localport=any` and `remoteport=any`
+        # when protocol=any.  Omit both fields in that case; their defaults
+        # already mean any port.
+        if record["protocol"] in {"tcp", "udp"}:
+            fields.extend((
+                f"localport={record['local_port']}",
+                f"remoteport={record.get('remote_port', 'any')}",
+            ))
+        fields.append(f"remoteip={record['remote_ip']}")
+        return fields
+
     def _add_rule(self, record: dict[str, Any]) -> None:
         self._run_netsh([
-            "advfirewall", "firewall", "add", "rule", f"name={record['system_name']}", f"dir={DIRECTIONS[record['direction']]}",
-            f"action={record['action']}", f"program={record['program']}", f"enable={'yes' if record.get('enabled', True) else 'no'}", f"profile={record['profile']}",
-            f"protocol={record['protocol'].upper()}", f"localport={record['local_port']}", f"remoteport={record.get('remote_port', 'any')}", f"remoteip={record['remote_ip']}",
+            "advfirewall", "firewall", "add", "rule", f"name={record['system_name']}",
+            *self._rule_fields(record),
         ])
 
     def _set_rule(self, record: dict[str, Any]) -> None:
         """Update an owned rule in place so an invalid edit cannot remove it."""
         self._run_netsh([
             "advfirewall", "firewall", "set", "rule", f"name={record['system_name']}", "new",
-            f"dir={DIRECTIONS[record['direction']]}", f"action={record['action']}", f"program={record['program']}",
-            f"enable={'yes' if record.get('enabled', True) else 'no'}", f"profile={record['profile']}",
-            f"protocol={record['protocol'].upper()}", f"localport={record['local_port']}", f"remoteport={record.get('remote_port', 'any')}", f"remoteip={record['remote_ip']}",
+            *self._rule_fields(record),
         ])
 
     def _delete_system_rule(self, record: dict[str, Any]) -> None:

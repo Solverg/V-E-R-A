@@ -39,6 +39,12 @@ class BackendServiceTests(unittest.TestCase):
         self.assertEqual(len(listed["data"]), 1)
         self.assertTrue(self.service.handle({"action": "rules.delete", "name": "demo.exe"})["data"])
 
+    def test_permanent_rule_is_the_default_for_the_block_action(self):
+        created = self.service.handle({"action": "rules.upsert", "name": "blocked.exe"})
+
+        self.assertEqual(created["data"]["mode"], "permanent")
+        self.assertTrue(created["data"]["enabled"])
+
     def test_rule_list_keeps_the_cached_description_for_the_rules_screen(self):
         self.service.upsert_rule("demo.exe", exe_path=r"C:\Apps\demo.exe")
         (Path(self.temp_dir.name) / "descriptions.json").write_text(
@@ -354,6 +360,28 @@ class BackendServiceTests(unittest.TestCase):
         self.assertIn("remoteport=8443", calls[-1])
         self.assertFalse(updated["enabled"])
         self.assertNotIn("delete", [argument for call in calls for argument in call])
+
+    def test_firewall_omits_any_ports_for_an_any_protocol_rule(self):
+        executable = Path(self.temp_dir.name) / "demo.exe"
+        executable.touch()
+        manager = FirewallManager(Path(self.temp_dir.name))
+        values = {"label": "Block all network", "program": str(executable), "action": "block", "direction": "outbound", "protocol": "any", "local_port": "any", "remote_port": "any", "remote_ip": "any", "profile": "any"}
+
+        with patch.object(FirewallManager, "_run_netsh") as netsh:
+            manager.create(values)
+
+        command = netsh.call_args.args[0]
+        self.assertIn("protocol=ANY", command)
+        self.assertNotIn("localport=any", command)
+        self.assertNotIn("remoteport=any", command)
+
+    def test_firewall_rejects_port_filters_without_tcp_or_udp(self):
+        executable = Path(self.temp_dir.name) / "demo.exe"
+        executable.touch()
+        manager = FirewallManager(Path(self.temp_dir.name))
+
+        with self.assertRaisesRegex(ValueError, "TCP или UDP"):
+            manager.create({"label": "Invalid port filter", "program": str(executable), "protocol": "any", "local_port": "443"})
 
     def test_firewall_rolls_back_system_rule_when_local_save_fails(self):
         executable = Path(self.temp_dir.name) / "demo.exe"
